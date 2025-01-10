@@ -560,11 +560,7 @@ inline int vma_expand(struct ma_state *mas, struct vm_area_struct *vma,
 	if (mas_preallocate(mas, vma, GFP_KERNEL))
 		goto nomem;
 
-#ifdef CONFIG_CONT_PTE_HUGEPAGE
-	vma_adjust_cont_pte_trans_huge(vma, start, end, 0);
-#else
 	vma_adjust_trans_huge(vma, start, end, 0);
-#endif
 
 	if (file) {
 		mapping = file->f_mapping;
@@ -772,12 +768,7 @@ int __vma_adjust(struct vm_area_struct *vma, unsigned long start,
 		return -ENOMEM;
 	}
 
-#ifdef CONFIG_CONT_PTE_HUGEPAGE
-	vma_adjust_cont_pte_trans_huge(orig_vma, start, end, adjust_next);
-#else
 	vma_adjust_trans_huge(orig_vma, start, end, adjust_next);
-#endif
-
 	if (file) {
 		mapping = file->f_mapping;
 		root = &mapping->i_mmap;
@@ -1786,11 +1777,7 @@ generic_get_unmapped_area(struct file *filp, unsigned long addr,
 	info.length = len;
 	info.low_limit = mm->mmap_base;
 	info.high_limit = mmap_end;
-#ifndef CONFIG_CONT_PTE_HUGEPAGE
 	info.align_mask = 0;
-#else
-	handle_chp_get_unmapped_area(&info, filp, pgoff);
-#endif
 	info.align_offset = 0;
 	return vm_unmapped_area(&info);
 }
@@ -1840,11 +1827,7 @@ generic_get_unmapped_area_topdown(struct file *filp, unsigned long addr,
 	info.length = len;
 	info.low_limit = max(PAGE_SIZE, mmap_min_addr);
 	info.high_limit = arch_get_mmap_base(addr, mm->mmap_base);
-#ifndef CONFIG_CONT_PTE_HUGEPAGE
 	info.align_mask = 0;
-#else
-	handle_chp_get_unmapped_area(&info, filp, pgoff);
-#endif
 	info.align_offset = 0;
 	addr = vm_unmapped_area(&info);
 
@@ -2249,8 +2232,6 @@ struct vm_area_struct *find_extend_vma_locked(struct mm_struct *mm, unsigned lon
 #else
 int expand_stack_locked(struct vm_area_struct *vma, unsigned long address)
 {
-	if (unlikely(!(vma->vm_flags & VM_GROWSDOWN)))
-		return -EINVAL;
 	return expand_downwards(vma, address);
 }
 
@@ -2432,14 +2413,6 @@ int __split_vma(struct mm_struct *mm, struct vm_area_struct *vma,
 	struct vm_area_struct *new;
 	int err;
 	validate_mm_mt(mm);
-
-#ifdef CONFIG_CONT_PTE_HUGEPAGE
-#if CONFIG_CHP_ABNORMAL_PTES_DEBUG
-	if (vma_is_chp_anonymous(vma) && !IS_ALIGNED(addr, HPAGE_CONT_PTE_SIZE)) {
-		commit_chp_abnormal_ptes_record(DOUBLE_MAP_REASON_SPLIT_VMA);
-	}
-#endif
-#endif
 
 	vma_start_write(vma);
 	if (vma->vm_ops && vma->vm_ops->may_split) {
@@ -3227,12 +3200,7 @@ static int do_brk_flags(struct ma_state *mas, struct vm_area_struct *vma,
 
 		/* Set flags first to implicitly lock the VMA before updates */
 		vm_flags_set(vma, VM_SOFTDIRTY);
-
-#ifdef CONFIG_CONT_PTE_HUGEPAGE
-		vma_adjust_cont_pte_trans_huge(vma, vma->vm_start, addr + len, 0);
-#else
 		vma_adjust_trans_huge(vma, vma->vm_start, addr + len, 0);
-#endif
 		if (vma->anon_vma) {
 			anon_vma_lock_write(vma->anon_vma);
 			anon_vma_interval_tree_pre_update_vma(vma);
@@ -3361,9 +3329,11 @@ void exit_mmap(struct mm_struct *mm)
 	lru_add_drain();
 	flush_cache_mm(mm);
 	tlb_gather_mmu_fullmm(&tlb, mm);
+	trace_android_vh_swapmem_gather_init(mm);
 	/* update_hiwater_rss(mm) here? but nobody should be looking */
 	/* Use ULONG_MAX here to ensure all VMAs in the mm are unmapped */
 	unmap_vmas(&tlb, &mm->mm_mt, vma, 0, ULONG_MAX, vma->vm_end, ULONG_MAX, false);
+	trace_android_vh_swapmem_gather_finish(mm);
 	mmap_read_unlock(mm);
 
 	/*
